@@ -96,11 +96,16 @@ echo
 
 ### 4. Install requirements only if changed ###########################
 
-if echo "$CHANGED_FILES" | grep -q '^requirements.txt$'; then
-    echo "📦 requirements.txt changed → installing dependencies..."
-    "$PIP_PATH" install -r requirements.txt --upgrade
+if [ "$FORCE" = true ]; then
+    echo "📦 FORCE MODE → installing dependencies regardless of changes..."
+    pip install -r requirements.txt --upgrade
 else
-    echo "📦 requirements unchanged → skipping pip install."
+    if echo "$CHANGED_FILES" | grep -q "^requirements.txt$"; then
+        echo "📦 requirements.txt changed → installing dependencies..."
+        pip install -r requirements.txt --upgrade
+    else
+        echo "📦 requirements unchanged → skipping pip install."
+    fi
 fi
 
 ### 5. Reload systemd ##################################################
