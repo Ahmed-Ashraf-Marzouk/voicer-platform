@@ -1,125 +1,136 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
-PROJECT_DIR="/opt/voicer-platform"
-VENV_DIR="$PROJECT_DIR/voicer-env"
-SERVICE_VOICER_PREV="voicer-prev.service"
-SERVICE_VOICER_API="voicer-api.service"   # example second service
+set -e
 
-cd "$PROJECT_DIR"
+### CONFIG ###########################################################
 
-echo "=== Deploy starting in $PROJECT_DIR ==="
+APP_DIR="/opt/voicer-platform"
+ENV_PATH="/home/ubuntu/miniconda3/envs/voicer-env"
+PYTHON_PATH="$ENV_PATH/bin/python"
+PIP_PATH="$ENV_PATH/bin/pip"
 
-# -----------------------------
-# 1. Remember previous commit
-# -----------------------------
-PREV_COMMIT_FILE=".last_deploy_commit"
-PREV_COMMIT=""
-if [ -f "$PREV_COMMIT_FILE" ]; then
-  PREV_COMMIT="$(cat "$PREV_COMMIT_FILE")"
-fi
+# All services in the platform (canonical list)
+ALL_SERVICES=(
+    "voicer-main"
+    "voicer-ar"
+    "voicer-stats"
+    "voicer-anno"
+    "voicer-prev"
+)
 
-# -----------------------------
-# 2. Pull latest code
-# -----------------------------
-echo "-> Updating code (git pull)..."
-git fetch --all
-git pull --rebase
+# File to remember last deployed commit
+LAST_DEPLOY_FILE="$APP_DIR/.last_deploy_commit"
 
-CURRENT_COMMIT="$(git rev-parse HEAD)"
-echo "Previous commit: ${PREV_COMMIT:-<none>}"
-echo "Current commit : $CURRENT_COMMIT"
+######################################################################
 
-# If no previous commit recorded, treat as "everything changed"
-if [ -z "$PREV_COMMIT" ]; then
-  echo "No previous deploy detected. Assuming all services need restart."
-  CHANGED_FILES=$(git ls-files)  # everything
+echo "🚀 Starting Voicer platform deployment..."
+cd "$APP_DIR"
+
+### 0. Decide which services to deploy ################################
+
+if [ "$#" -gt 0 ]; then
+    # User passed service names as arguments
+    SERVICES=("$@")
+    echo "🧩 Selected services to deploy (from arguments): ${SERVICES[*]}"
 else
-  CHANGED_FILES=$(git diff --name-only "$PREV_COMMIT" "$CURRENT_COMMIT")
+    # No args → deploy all services
+    SERVICES=("${ALL_SERVICES[@]}")
+    echo "🧩 No services specified, deploying ALL: ${SERVICES[*]}"
 fi
 
-echo "Changed files since last deploy:"
-echo "$CHANGED_FILES"
 echo
 
-# -----------------------------
-# 3. Decide which services changed
-# -----------------------------
-NEED_RESTART_VOICER_PREV=false
-NEED_RESTART_VOICER_API=false
+### 1. Detect previous commit #########################################
 
-# Adjust these path prefixes to match your actual project layout
-if echo "$CHANGED_FILES" | grep -qE '^app/|^tts/|^voicer/|^requirements\.txt'; then
-  NEED_RESTART_VOICER_PREV=true
-fi
-
-if echo "$CHANGED_FILES" | grep -qE '^api/|^backend/'; then
-  NEED_RESTART_VOICER_API=true
-fi
-
-# If nothing changed (e.g. you re-ran deploy by accident)
-if [ -z "$CHANGED_FILES" ]; then
-  echo "No files changed since last deploy. Nothing to restart."
-  # Still update the last deploy commit
-  echo "$CURRENT_COMMIT" > "$PREV_COMMIT_FILE"
-  exit 0
-fi
-
-# -----------------------------
-# 4. Install dependencies if needed
-# -----------------------------
-if [ ! -d "$VENV_DIR" ]; then
-  echo "-> Creating virtualenv at $VENV_DIR"
-  python3 -m venv "$VENV_DIR"
-fi
-
-echo "-> Installing dependencies..."
-source "$VENV_DIR/bin/activate"
-if echo "$CHANGED_FILES" | grep -q 'requirements.txt'; then
-  echo "requirements.txt changed, running pip install -r requirements.txt"
-  pip install -r requirements.txt
+if git rev-parse HEAD >/dev/null 2>&1; then
+    PREV_COMMIT="$(git rev-parse HEAD)"
 else
-  echo "requirements.txt unchanged, skipping pip install."
+    PREV_COMMIT=""
 fi
 
-# -----------------------------
-# 5. Reload systemd units
-# -----------------------------
-echo "-> Reloading systemd (daemon-reload)..."
+echo "🔎 Previous commit: ${PREV_COMMIT:-<none>}"
+
+### 2. Pull latest code from origin/main ##############################
+
+echo "📥 Pulling latest code from GitHub (reset to origin/main)..."
+git fetch --all
+git reset --hard origin/main
+
+CURRENT_COMMIT="$(git rev-parse HEAD)"
+echo "🧾 Current commit:  $CURRENT_COMMIT"
+
+# If nothing changed, bail out early
+if [ -n "$PREV_COMMIT" ] && [ "$PREV_COMMIT" = "$CURRENT_COMMIT" ]; then
+    echo "✅ No new commits on origin/main. Skipping dependency install and service restarts."
+    echo "$CURRENT_COMMIT" > "$LAST_DEPLOY_FILE"
+    exit 0
+fi
+
+### 2.5 Show changed files ###########################################
+
+if [ -n "$PREV_COMMIT" ]; then
+    echo "📂 Files changed since last deploy:"
+    CHANGED_FILES=$(git diff --name-only "$PREV_COMMIT" "$CURRENT_COMMIT" || true)
+    echo "$CHANGED_FILES"
+else
+    echo "📂 Initial deploy or no previous commit recorded. Treating as fresh deployment."
+    CHANGED_FILES=$(git ls-files)
+    echo "$CHANGED_FILES"
+fi
+echo
+
+### 3. Install dependencies (only if requirements.txt changed) ########
+
+if echo "$CHANGED_FILES" | grep -q '^requirements.txt$'; then
+    echo "📦 requirements.txt changed → updating Python dependencies in conda env..."
+    "$PIP_PATH" install -r requirements.txt --upgrade
+else
+    echo "📦 requirements.txt unchanged → skipping pip install."
+fi
+
+### 4. Reload systemd units ###########################################
+
+echo "🔁 Reloading systemd units (daemon-reload)..."
 sudo systemctl daemon-reload
 
-# -----------------------------
-# 6. Restart only affected services
-# -----------------------------
-if $NEED_RESTART_VOICER_PREV; then
-  echo "-> Restarting $SERVICE_VOICER_PREV (code changed)..."
-  sudo systemctl restart "$SERVICE_VOICER_PREV"
-  sudo systemctl status "$SERVICE_VOICER_PREV" --no-pager -l || {
-    echo "!! $SERVICE_VOICER_PREV failed to start. Check logs with:"
-    echo "   journalctl -u $SERVICE_VOICER_PREV -n 50 --no-pager"
-    exit 1
-  }
-else
-  echo "-> Not restarting $SERVICE_VOICER_PREV (no relevant changes)."
-fi
+### 5. Restart only the selected services #############################
 
-if $NEED_RESTART_VOICER_API; then
-  echo "-> Restarting $SERVICE_VOICER_API (code changed)..."
-  sudo systemctl restart "$SERVICE_VOICER_API"
-  sudo systemctl status "$SERVICE_VOICER_API" --no-pager -l || {
-    echo "!! $SERVICE_VOICER_API failed to start. Check logs with:"
-    echo "   journalctl -u $SERVICE_VOICER_API -n 50 --no-pager"
-    exit 1
-  }
-else
-  echo "-> Not restarting $SERVICE_VOICER_API (no relevant changes)."
-fi
+echo "🔄 Restarting selected services: ${SERVICES[*]}"
 
-# -----------------------------
-# 7. Save current commit as last deploy
-# -----------------------------
-echo "$CURRENT_COMMIT" > "$PREV_COMMIT_FILE"
+for svc in "${SERVICES[@]}"; do
+    # Optional: sanity check it's in the known list
+    if [[ ! " ${ALL_SERVICES[*]} " =~ " ${svc} " ]]; then
+        echo "   ⚠️  Warning: $svc is not in ALL_SERVICES list. Trying to restart anyway..."
+    fi
 
-echo "✅ Deploy finished. Updated to commit $CURRENT_COMMIT."
+    echo "   ↻ Restarting $svc..."
+    sudo systemctl restart "$svc" || {
+        echo "   ❌ Failed to restart $svc"
+        sudo systemctl status "$svc" --no-pager || true
+        exit 1
+    }
+    sleep 1
+done
 
+### 6. Verify selected services #######################################
 
+echo "🩺 Checking service statuses..."
+for svc in "${SERVICES[@]}"; do
+    if systemctl is-active --quiet "$svc"; then
+        echo "   ✅ $svc is running"
+    else
+        echo "   ❌ $svc FAILED to start!"
+        sudo systemctl status "$svc" --no-pager
+        exit 1
+    fi
+done
+
+### 7. Log deployment & remember commit ###############################
+
+echo "📘 Logging deployment timestamp..."
+mkdir -p /home/ubuntu/.voicer
+echo "$(date): Deployment completed successfully (commit $CURRENT_COMMIT) [services: ${SERVICES[*]}]" >> /home/ubuntu/.voicer/deploy.log
+
+echo "$CURRENT_COMMIT" > "$LAST_DEPLOY_FILE"
+
+echo "🎉 Deployment finished successfully!"
