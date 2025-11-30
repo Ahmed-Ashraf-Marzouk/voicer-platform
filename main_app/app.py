@@ -3,7 +3,7 @@ import json
 import uuid
 from pathlib import Path
 from datetime import datetime
-
+from dotenv import load_dotenv
 import boto3
 import gradio as gr
 import soundfile as sf
@@ -14,6 +14,7 @@ from supabase import create_client, Client
 # CONFIG & GLOBALS
 # ===============================
 
+load_dotenv()
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path(".").resolve()
 DATA_DIR = Path.home() / ".tts_dataset_creator"
 USERS_ROOT = DATA_DIR / "users"
