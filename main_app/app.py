@@ -18,7 +18,6 @@ load_dotenv()
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path(".").resolve()
 DATA_DIR = Path.home() / ".tts_dataset_creator"
 USERS_ROOT = DATA_DIR / "users"
-SENTENCES_FILE = BASE_DIR / "sentences.json"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 USERS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -346,37 +345,79 @@ def split_dialect_code(dialect_code: str):
         return parts[0], parts[1]
     return parts[0], "gen"
 
-
 # ===============================
-# SENTENCES (cached in memory)
+# SENTENCES (per-country, cached)
 # ===============================
 
-if not SENTENCES_FILE.exists():
-    SENTENCES_FILE.write_text(
-        json.dumps({
-            "sentences": [
-                {"unique_id": "001", "text": "The birch canoe slid on the smooth planks.", "dialect": ["sa-hj"]},
-                {"unique_id": "002", "text": "Glue the sheet to the dark blue background.", "dialect": ["sa-hj"]},
-            ]
-        }, ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
+SENTENCES_CACHE = {}  # {country_code: [(id, text, [dialects]), ...]}
 
-_raw = json.loads(SENTENCES_FILE.read_text(encoding="utf-8"))["sentences"]
-ALL_SENTENCES = [
-    (s["unique_id"], s["text"], s.get("dialect", []))
-    for s in _raw
-]
+
+def get_sentences_file_for_country(country_code: str) -> Path:
+    """
+    Return the path to the sentences file for a given country code,
+    e.g. 'eg' -> BASE_DIR / 'sentences_eg.json'.
+    """
+    return BASE_DIR / f"sentences_{country_code}.json"
+
+
+def load_sentences_for_country(country_code: str):
+    """
+    Load and cache all sentences for a given country code.
+
+    Expected JSON structure:
+    {
+      "sentences": [
+        {
+          "unique_id": "105130",
+          "text": "...",
+          "dialect": ["eg-ca", "eg-al", ...]
+        },
+        ...
+      ]
+    }
+    """
+    if country_code in SENTENCES_CACHE:
+        return SENTENCES_CACHE[country_code]
+
+    path = get_sentences_file_for_country(country_code)
+
+    # If missing, initialise an empty file (or you can raise an error if you prefer)
+    if not path.exists():
+        path.write_text(
+            json.dumps({"sentences": []}, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    raw_sentences = data.get("sentences", [])
+
+    SENTENCES_CACHE[country_code] = [
+        (s["unique_id"], s["text"], s.get("dialect", []))
+        for s in raw_sentences
+    ]
+    return SENTENCES_CACHE[country_code]
+
 
 
 def filter_sentences(dialect_code: str, completed_ids):
+    """
+    Return all (sentence_id, text) pairs for a given dialect_code,
+    excluding any sentence IDs in completed_ids.
+
+    - dialect_code looks like 'sa-hj', 'eg-ca', etc.
+    - We infer the country_code ('sa', 'eg', ...) from dialect_code,
+      then load the corresponding sentences_{country_code}.json.
+    """
     completed_set = set(completed_ids or [])
+
+    country_code, _ = split_dialect_code(dialect_code)
+    all_sentences = load_sentences_for_country(country_code)
+
     return [
         (sid, text)
-        for sid, text, dialects in ALL_SENTENCES
+        for sid, text, dialects in all_sentences
         if sid not in completed_set and dialect_code in dialects
     ]
-
 
 # ===============================
 # AUTH / SUPABASE
