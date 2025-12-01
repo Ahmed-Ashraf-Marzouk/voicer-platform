@@ -29,6 +29,8 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "voicer-storage")
 AWS_REGION = os.environ.get("AWS_REGION", "me-south-1")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+print(SUPABASE_KEY)
+print(SUPABASE_URL)
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("⚠️ Supabase env vars not set")
@@ -56,6 +58,9 @@ S3_CLIENT = _create_s3_client()
 # ===============================
 # COUNTRIES & DIALECTS
 # ===============================
+AVAILABLE_COUNTRIES = [
+    "Egypt", "Saudi Arabia", "Morocco"
+]
 
 COUNTRIES = [
     "Algeria", "Bahrain", "Egypt", "Iraq", "Jordan", "Kuwait", "Lebanon",
@@ -115,7 +120,7 @@ COUNTRY_DIALECTS = {
         "دار البيضاء": "ca",
         "مراكشية": "ma",
         "شمالية": "no",
-        "أطلسية": "at",
+        "شرقية": "shar",
         "أخرى": "oth"
     },
     "Iraq": {
@@ -165,7 +170,7 @@ COUNTRY_DIALECTS = {
         "إماراتية": "em",
         "دبية": "du",
         "أبوظبية": "ad",
-        "شارقية": "sh",
+        "شارقية": "shr",
         "أخرى": "oth"
     },
     "Kuwait": {
@@ -226,6 +231,105 @@ COUNTRY_DIALECTS = {
         "أخرى": "oth"
     }
 }
+
+RECORDING_INSTRUCTIONS = """
+<div dir="rtl" style="text-align: right">
+
+### تعليمات التسجيل
+1. **البيئة**: سجّل في مكان هادئ قد ما تقدر، وحاول ما يكون فيه ضوضاء أو أصوات في الخلفية.  
+2. **الميكروفون**: يفضّل تستخدم مايك سماعة أو مايك خارجي، لأنه غالبًا بيكون أوضح بكثير من مايك اللابتوب. في حالة استخدام الجوال يمكن فقط التأكد من جودة التسجيل قبل الإكمال.  
+3. **طريقة التحدث**: اقرأ الجملة بصوت واضح وطبيعي، وبلهجتك. لا تغيّر أو تستبدل أي كلمة أبدًا، إلا لو كان فيه اختلاف بالنطق مثل: "ثلاثة" و"تلاتة" — هذا عادي. إذا حسّيت إنك ما تبغى تسجل جملة معينة أو ما عرفت تنطقها، عادي اضغط "Skip".  
+4. **التعديل**: تقدر تعدل الجملة قبل لا تسجل إذا ودك.  
+5. **الحفظ**: بعد ما تسجل، اضغط "Save & Next" عشان تحفظ تسجيلك. إذا ودك تعيد، استخدم "Discard"، أو اضغط "Skip" عشان تروح للجملة اللي بعدها.  
+6. **المدة**: حاول تسجل عدد كافي من الجمل، كل تسجيل يساعدنا أكثر! حاول يكون مجموع تسجيلاتك على الأقل 30 دقيقة، ونقدّر وقتك وجهدك   
+
+إذا عندك أي مشكلة أو استفسار، تواصل معي على الإيميل:  
+a.a.elghawas@gmail.com
+</div>
+"""
+
+CONSENT_DETAILS = """
+<section dir="rtl" lang="ar" style="text-align: right">
+  <h1>الموافقة على جمع واستخدام البيانات</h1>
+  <p>
+    هذه الاتفاقية بين <strong>المشارك </strong> وفريق البحث من 
+    <strong>جامعة الملك فهد للبترول والمعادن</strong> و<strong>جامعة طيبة</strong> 
+    (والتي سنشير إليها فيما يلي بـ "الجامعتين").  
+    الهدف من الاتفاقية هو جمع واستخدام وتوزيع تسجيلات صوتية لدعم أبحاث كشف الأصوات المزيفة (Deepfake) وغيرها من الأبحاث غير التجارية.
+  </p>
+  <ol>
+    <li>
+      <strong>هدف جمع البيانات:</strong><br>
+      يقوم الفريق بجمع تسجيلات صوتية لإنشاء مجموعة بيانات (Dataset) خاصة بالكشف عن الأصوات المصنعة بالذكاء الاصطناعي 
+      باستخدام تقنيات تحويل النص إلى صوت (TTS) أو تقليد الأصوات (Voice Conversion) وطرق أخرى.  
+      ستُستخدم هذه البيانات في أبحاث علمية وأكاديمية لتطوير طرق أفضل لاكتشاف الأصوات المزيفة وغيرها من الأبحاث غير التجارية.
+    </li>
+    <li>
+      <strong>طبيعة البيانات التي سيتم جمعها:</strong><br>
+      يوافق المشارك على تقديم:  
+      <ul>
+        <li>تسجيلات صوتية بصوته الطبيعي أو من خلال نصوص/جمل يطلب منه قراءتها.</li>
+        <li>بيانات اختيارية مثل: النوع (ذكر/أنثى)، الفئة العمرية، اللهجة، وغيرها.</li>
+        <li>موافقة على إمكانية تعديل صوته أو تغييره باستخدام أساليب صناعية.</li>
+      </ul>
+    </li>
+    <li>
+      <strong>الحقوق الممنوحة:</strong><br>
+      يمنح المشارك الفريق الحق الكامل (بدون مقابل مالي أو قيود) في:  
+      <ul>
+        <li>تسجيل ومعالجة واستخدام الصوت الطبيعي والنسخ المصنعة منه.</li>
+        <li>توزيع مجموعة البيانات (الطبيعية والمصنعة) للباحثين في المجتمع العلمي لأغراض بحثية غير تجارية فقط.</li>
+        <li>نشر عينات صوتية على منصات مهنية أو أكاديمية مثل LinkedIn، X/Twitter، YouTube لتعزيز الوعي بأبحاث الديب فيك أو للإعلان عن توفر البيانات.</li>
+      </ul>
+    </li>
+    <li>
+      <strong>إتاحة البيانات:</strong><br>
+      سيتم نشر المجموعة الصوتية (الطبيعية والمصنعة) بترخيص مفتوح 
+      <em>(Creative Commons Attribution 4.0)</em> 
+      مما يسمح لأي باحث باستخدامها ومشاركتها لأغراض أكاديمية غير تجارية.
+    </li>
+    <li>
+      <strong>الخصوصية والسرية:</strong><br>
+      <ul>
+        <li>لن يتم نشر اسم المشارك أو أي بيانات شخصية مباشرة إلا بموافقته المكتوبة.</li>
+        <li>سيكون للمشارك معرف (ID) مجهول داخل مجموعة البيانات.</li>
+      </ul>
+    </li>
+    <li>
+      <strong>المشاركة والانضمام:</strong><br>
+      <ul>
+        <li>المشاركة اختيارية 100٪.</li>
+        <li>للمشارك الحق في الانسحاب أو طلب حذف تسجيلاته قبل نشر مجموعة البيانات للعامة.</li>
+        <li>بعد النشر العام، سحب البيانات لن يكون ممكنًا بسبب طريقة توزيعها.</li>
+      </ul>
+    </li>
+    <li>
+      <strong>التعويض:</strong><br>
+      يدرك المشارك أن المشاركة لا تتضمن أي مقابل مادي، والمساهمة هنا لدعم وتطوير البحث العلمي فقط.
+    </li>
+  </ol>
+</section>
+"""
+
+
+AGES = [
+    "4–9",   # baby
+    "10–14", # child
+    "15–19", # teen
+    "20–24", # young adult
+    "25–34", # adult
+    "35–44", # mid-age adult
+    "45–54", # older adult
+    "55–64", # senior
+    "65–74", # elderly
+    "75–84", # aged
+    "85+"    # very aged
+]
+
+GENDER = [
+    "ذكر",
+    "أنثى"
+]
 
 
 def get_dialects_for_country(country: str):
@@ -300,7 +404,7 @@ def get_user_by_username(username: str):
         return None
 
 
-def create_user(name: str, email: str, password: str, country: str, dialect_label: str):
+def create_user(name: str, email: str, password: str, country: str, dialect_label: str, gender: str, age: str):
     if not supabase:
         return False, "Supabase not configured"
 
@@ -324,6 +428,8 @@ def create_user(name: str, email: str, password: str, country: str, dialect_labe
         "password": hashed_pw,
         "country": country,
         "dialect_code": dialect_code,
+        "gender": gender,
+        "age": age,
         "created_at": datetime.utcnow().isoformat(),
     }
 
@@ -552,14 +658,26 @@ def build_app():
             reg_name = gr.Textbox(label="Name (Latin)")
             reg_email = gr.Textbox(label="Email")
             reg_pw = gr.Textbox(label="Password", type="password")
-            reg_country = gr.Dropdown(choices=COUNTRIES, value="Saudi Arabia", label="Country")
+            reg_country = gr.Dropdown(choices=AVAILABLE_COUNTRIES, value="Saudi Arabia", label="Country")
             default_dialects = get_dialects_for_country("Saudi Arabia")
             reg_dialect = gr.Dropdown(
                 choices=default_dialects,
                 value=None,   # user must choose
                 label="Dialect"
             )
-            reg_btn = gr.Button("Register")
+            reg_gender = gr.Dropdown(
+                choices=GENDER,
+                value=None,   # user must choose
+                label="Gender"
+            )
+            reg_age = gr.Dropdown(
+                choices=AGES,
+                value=None,   # user must choose
+                label="Age Group"
+            )
+            with gr.Accordion("إتفاقية التسجيل بالموقع واستخدام البيانات", open=True, visible=True):
+                inst_output = gr.Markdown(CONSENT_DETAILS)
+            reg_btn = gr.Button("Register", variant="primary")
             reg_msg = gr.Markdown("")
             back_to_login_btn = gr.Button("Back to login")
 
@@ -567,12 +685,14 @@ def build_app():
         with gr.Column(visible=False) as main_view:
             info = gr.Markdown("")
             logout_btn = gr.Button("Logout")
+            with gr.Accordion("تعليمات مهمة للتسجيل", open=True, visible=True):
+                rec_inst_output = gr.Markdown(RECORDING_INSTRUCTIONS)
             username_box = gr.Textbox(label="Username", interactive=False)
             progress_box = gr.Textbox(label="Progress", interactive=False)
             sentence_box = gr.Textbox(label="Sentence", interactive=True, lines=3)
-            sentence_id_box = gr.Textbox(label="Sentence ID", interactive=False)
+            sentence_id_box = gr.Textbox(label="Sentence ID", interactive=False, visible=False)
             audio_rec = gr.Audio(sources=["microphone"], type="filepath", label="Record")
-            save_btn = gr.Button("Save & Next")
+            save_btn = gr.Button("Save & Next", variant="primary")
             skip_btn = gr.Button("Skip")
             msg_box = gr.Markdown("")
 
@@ -624,8 +744,8 @@ def build_app():
             outputs=reg_dialect
         )
 
-        def do_register(name, email, pw, country, dialect_label, st):
-            if not all([name, email, pw, country, dialect_label]):
+        def do_register(name, email, pw, country, dialect_label, gender, age, st):
+            if not all([name, email, pw, country, dialect_label, gender, age]):
                 return (
                     st,
                     "❌ Please fill all fields",
@@ -634,7 +754,7 @@ def build_app():
                     gr.update(visible=False),
                 )
 
-            ok, result = create_user(name, email, pw, country, dialect_label)
+            ok, result = create_user(name, email, pw, country, dialect_label, gender, age)
             if not ok:
                 return (
                     st,
@@ -654,7 +774,7 @@ def build_app():
 
         reg_btn.click(
             do_register,
-            inputs=[reg_name, reg_email, reg_pw, reg_country, reg_dialect, state],
+            inputs=[reg_name, reg_email, reg_pw, reg_country, reg_dialect, reg_gender, reg_age, state],
             outputs=[state, reg_msg, login_view, register_view, main_view],
         )
 
