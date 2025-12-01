@@ -454,12 +454,12 @@ def create_user(name: str, email: str, password: str, country: str, dialect_labe
         return False, "Email already registered"
 
     base = name.strip().replace(" ", "_").lower() or "user"
-    username = f"{base}_{uuid.uuid4().hex[:6]}"
 
     country_code = COUNTRY_CODES.get(country, "unk")
     dialect_map = COUNTRY_DIALECTS.get(country, {})
     dialect_code_raw = dialect_map.get(dialect_label, "oth")
     dialect_code = f"{country_code}-{dialect_code_raw}"
+    username = f"{base}_{uuid.uuid4().hex[:7]}_{dialect_code}_{'m' if gender == 'ذكر' else 'f'}"
 
     hashed_pw = generate_password_hash(password)
     payload = {
