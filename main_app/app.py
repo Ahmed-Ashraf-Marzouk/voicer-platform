@@ -3,6 +3,7 @@ import json
 import uuid
 from pathlib import Path
 from datetime import datetime
+import random
 from dotenv import load_dotenv
 import boto3
 import gradio as gr
@@ -850,7 +851,7 @@ def build_app():
                 sentence_id = ""
                 sentence_text = "No more sentences for your dialect."
             else:
-                sentence_id, sentence_text = available[0]
+                sentence_id, sentence_text = random.choice(available)
 
             st.update({
                 "logged_in": True,
@@ -921,7 +922,7 @@ def build_app():
                 st["current_sentence_id"] = ""
                 st["current_sentence_text"] = "No more sentences."
             else:
-                sid, text = available[0]
+                sid, text = random.choice(available)
                 st["current_sentence_id"] = sid
                 st["current_sentence_text"] = text
 
