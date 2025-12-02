@@ -12,7 +12,7 @@ PIP_PATH="$ENV_PATH/bin/pip"
 # All services in the platform
 ALL_SERVICES=(
     "voicer-main"
-    "voicer-ar"
+    "voicer-admin"
     "voicer-stats"
     "voicer-anno"
     "voicer-prev"
