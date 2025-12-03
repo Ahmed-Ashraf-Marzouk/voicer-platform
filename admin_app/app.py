@@ -1,10 +1,12 @@
 import os
+import io
 from pathlib import Path
 from datetime import datetime
 
 import boto3
 import gradio as gr
 import matplotlib.pyplot as plt
+import soundfile as sf  # for reading wav from bytes
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -256,7 +258,9 @@ def list_user_recordings(username, dialect_code):
             country_code = dialect_code or "unk"
 
         prefix = f"{country_code}/{username}/wavs/"
+        print("S3 prefix:", prefix)
         resp = S3_CLIENT.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+        print("S3 list_objects_v2 response:", resp)
         contents = resp.get("Contents", [])
         keys = [obj["Key"] for obj in contents]
         return keys, ""
@@ -268,6 +272,7 @@ def list_user_recordings(username, dialect_code):
 def generate_presigned_urls(keys):
     """
     Generate presigned URLs for a list of S3 keys.
+    Used only for clickable links in Markdown, not for audio preview.
     """
     if not S3_CLIENT or not S3_BUCKET:
         return {}
@@ -280,10 +285,31 @@ def generate_presigned_urls(keys):
                 Params={"Bucket": S3_BUCKET, "Key": k},
                 ExpiresIn=3600,  # 1 hour
             )
+            print("Presigned URL for", k, ":", url)
             urls[k] = url
         except Exception as e:
             print("generate_presigned_urls error for key", k, ":", e)
     return urls
+
+
+def load_audio_from_s3(key):
+    """
+    Download a wav from S3 and return as (sample_rate, numpy_array),
+    which gr.Audio(type="numpy") understands.
+
+    This bypasses Gradio's URL downloader and avoids 400 errors.
+    """
+    if not S3_CLIENT or not S3_BUCKET:
+        return None
+
+    try:
+        obj = S3_CLIENT.get_object(Bucket=S3_BUCKET, Key=key)
+        data = obj["Body"].read()
+        audio, sr = sf.read(io.BytesIO(data))  # audio: np.ndarray
+        return (sr, audio)
+    except Exception as e:
+        print("load_audio_from_s3 error for key", key, ":", e)
+        return None
 
 
 # ===============================
@@ -358,6 +384,9 @@ def make_dialect_plot(rows, max_labels=10):
 
 
 def make_country_compare_plot(rows):
+    """
+    Total recording minutes per country (cross-country view).
+    """
     if not rows:
         return None
 
@@ -380,33 +409,99 @@ def make_country_compare_plot(rows):
     return fig
 
 
-def make_extra_recording_plot(rows):
+def make_country_progress_plot(rows, target_seconds=RECORDING_TARGET_SECONDS):
     """
-    Extra recording = time beyond the 30-min target per user,
-    aggregated by country.
+    For each country, compare:
+      - Achieved total minutes
+      - Target total minutes (num_users_in_country * target_seconds)
     """
     if not rows:
         return None
 
-    extra_by_country = {}
+    total_by_country = {}
+    users_by_country = {}
+
     for r in rows:
         c = (r["country"] or "Unknown").strip() or "Unknown"
-        extra_sec = max(r["total_duration"] - RECORDING_TARGET_SECONDS, 0.0)
-        extra_by_country[c] = extra_by_country.get(c, 0.0) + extra_sec
+        total_by_country[c] = total_by_country.get(c, 0.0) + r["total_duration"]
+        users_by_country[c] = users_by_country.get(c, 0) + 1
 
-    if not any(extra_by_country.values()):
+    labels = []
+    achieved_min = []
+    target_min = []
+
+    for c in total_by_country:
+        labels.append(c)
+        total_sec = total_by_country[c]
+        n_users = users_by_country[c]
+        achieved_min.append(total_sec / 60.0)
+        target_min.append(n_users * target_seconds / 60.0)
+
+    if not labels:
         return None
 
-    labels = list(extra_by_country.keys())
-    values = [extra_by_country[c] / 60.0 for c in labels]  # minutes
+    fig, ax = plt.subplots()
+    x = range(len(labels))
+
+    ax.bar(x, target_min, label="Target (30 min per user)", alpha=0.3)
+    ax.bar(x, achieved_min, label="Achieved", width=0.5)
+
+    ax.set_title("Country progress vs 30-min target")
+    ax.set_ylabel("Total minutes")
+    ax.set_xlabel("Country")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.legend()
+    fig.tight_layout()
+    return fig
+
+
+def make_duration_histogram(rows, scope_label):
+    """
+    Distribution of per-user recording duration in minutes (for a single country).
+    """
+    durations_min = [r["total_duration"] / 60.0 for r in rows if r["total_duration"] > 0.0]
+    if not durations_min:
+        return None
 
     fig, ax = plt.subplots()
-    ax.bar(labels, values)
-    ax.set_title("Extra recording time beyond 30 min target by country")
-    ax.set_ylabel("Extra minutes recorded")
-    ax.set_xlabel("Country")
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.hist(durations_min, bins=10)
+    ax.axvline(RECORDING_TARGET_MINUTES, linestyle="--", linewidth=1)
+    ax.set_title(f"Recording duration distribution – {scope_label}")
+    ax.set_xlabel("Minutes recorded per user")
+    ax.set_ylabel("Number of users")
+    fig.tight_layout()
+    return fig
+
+
+def make_user_progress_plot(rows, scope_label, top_n=50):
+    """
+    Per-speaker progress vs 30-minute target (%), for a single country.
+    """
+    if not rows:
+        return None
+
+    sorted_rows = sorted(rows, key=lambda r: r["total_duration"], reverse=True)
+    subset = sorted_rows[:top_n]
+
+    labels = [r["username"] for r in subset]
+    pct_vals = [
+        (r["total_duration"] / RECORDING_TARGET_SECONDS * 100.0) if RECORDING_TARGET_SECONDS > 0 else 0.0
+        for r in subset
+    ]
+
+    if not labels:
+        return None
+
+    fig, ax = plt.subplots()
+    x = range(len(labels))
+    ax.bar(x, pct_vals)
+    ax.axhline(100, linestyle="--", linewidth=1)
+    ax.set_title(f"Speaker progress vs 30-min target – {scope_label}")
+    ax.set_ylabel("% of target")
+    ax.set_xlabel("Speakers (sorted by duration)")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
     fig.tight_layout()
     return fig
 
@@ -422,7 +517,7 @@ def build_admin_app():
             "admin_email": None,
             "admin_name": None,
             "users_cache": [],
-            "recordings_map": {},   # key -> presigned URL for current user
+            "recordings_map": {},   # key -> presigned URL for current user (for markdown links)
         })
 
         gr.Markdown("""
@@ -496,6 +591,7 @@ Manage admins, view user recordings from S3, and monitor progress.
                     audio_preview = gr.Audio(
                         label="Preview recording",
                         interactive=False,
+                        type="numpy",  # we return (sr, numpy_array) from callbacks
                     )
 
                     recordings_md = gr.Markdown("")
@@ -516,17 +612,17 @@ Manage admins, view user recordings from S3, and monitor progress.
                     stats_df = gr.Dataframe(
                         headers=[
                             "username", "country", "dialect_code",
-                            "total_duration(sec)", "#sentences"
+                            "total_duration(sec)", "#sentences", "% of 30-min target"
                         ],
                         interactive=False,
-                        label="Per-user stats",
+                        label="Per-user stats (top 50 by duration)",
                         row_count=(1, "dynamic"),
                     )
 
                     gender_plot = gr.Plot(label="Gender distribution")
                     dialect_plot = gr.Plot(label="Dialect distribution")
-                    country_compare_plot = gr.Plot(label="Country comparison (total time)")
-                    extra_plot = gr.Plot(label="Extra recording time per country")
+                    plot_3 = gr.Plot(label="Recording / country overview")
+                    plot_4 = gr.Plot(label="Progress vs target")
 
         # ======================
         # AUTH CALLBACKS
@@ -683,6 +779,7 @@ Manage admins, view user recordings from S3, and monitor progress.
                     None,
                 )
 
+            # Still generate presigned URLs for markdown links (optional)
             url_map = generate_presigned_urls(keys)
             st["recordings_map"] = url_map
 
@@ -698,7 +795,7 @@ Manage admins, view user recordings from S3, and monitor progress.
 
             choices = keys
             default_key = keys[0]
-            default_url = url_map.get(default_key)
+            default_audio = load_audio_from_s3(default_key)
 
             return (
                 st,
@@ -706,7 +803,7 @@ Manage admins, view user recordings from S3, and monitor progress.
                 username,
                 dialect_code,
                 gr.update(choices=choices, value=default_key),
-                default_url,
+                default_audio,
             )
 
         load_recordings_btn.click(
@@ -725,8 +822,8 @@ Manage admins, view user recordings from S3, and monitor progress.
         def change_preview_file(st, selected_key):
             if not selected_key:
                 return None
-            url = (st.get("recordings_map") or {}).get(selected_key)
-            return url
+            # Ignore URLs here; directly load from S3:
+            return load_audio_from_s3(selected_key)
 
         file_choice_rec.change(
             fn=change_preview_file,
@@ -741,7 +838,7 @@ Manage admins, view user recordings from S3, and monitor progress.
         def handle_compute_stats(country_filter):
             rows, err = get_users_with_sessions(country_filter)
             if err:
-                empty_table = [["", "", "", 0.0, 0]]
+                empty_table = [["", "", "", 0.0, 0, 0.0]]
                 return (
                     f"❌ Error: `{err}`",
                     empty_table,
@@ -750,6 +847,9 @@ Manage admins, view user recordings from S3, and monitor progress.
                     None,
                     None,
                 )
+
+            # Keep only users who actually recorded something
+            rows = [r for r in rows if r["total_duration"] > 0.0]
 
             stats = compute_global_stats(rows)
 
@@ -760,6 +860,12 @@ Manage admins, view user recordings from S3, and monitor progress.
             avg_sec = stats["avg_duration"]
             avg_min = int(avg_sec // 60)
             avg_sec_rem = int(avg_sec % 60)
+
+            # How many users hit / did not hit the 30-min target
+            users_above_target = sum(
+                1 for r in rows if r["total_duration"] >= RECORDING_TARGET_SECONDS
+            )
+            users_below_target = len(rows) - users_above_target
 
             scope_label = (
                 "All countries"
@@ -775,31 +881,53 @@ Manage admins, view user recordings from S3, and monitor progress.
 - Total recorded sentences: **{stats['total_sentences']}**
 - Average duration per user: **{avg_min}m {avg_sec_rem}s** (≈ {avg_sec:.1f} s)
 - Average #sentences per user: **{stats['avg_sentences']:.2f}**
+
+- Users at or above 30 min: **{users_above_target}**
+- Users below 30 min: **{users_below_target}**
 """
 
+            # Per-user table: top 50 by duration, with % of target
+            sorted_rows = sorted(rows, key=lambda r: r["total_duration"], reverse=True)
+            top_n = 50
             table = []
-            for r in rows:
+            for r in sorted_rows[:top_n]:
+                pct_target = (
+                    (r["total_duration"] / RECORDING_TARGET_SECONDS) * 100.0
+                    if RECORDING_TARGET_SECONDS > 0
+                    else 0.0
+                )
                 table.append([
                     r["username"],
                     r["country"],
                     r["dialect_code"],
                     round(r["total_duration"], 2),
                     r["num_sentences"],
+                    round(pct_target, 1),
                 ])
             if not table:
-                table = [["<no users>", "", "", 0.0, 0]]
+                table = [["<no users>", "", "", 0.0, 0, 0.0]]
 
+            # Plots:
+            #  - Gender & dialect always computed on the filtered set (All or specific country)
+            #  - plot_3 and plot_4 depend on whether we are in "All" or per-country mode
             gender_fig = make_gender_plot(rows)
             dialect_fig = make_dialect_plot(rows)
-            country_compare_fig = make_country_compare_plot(rows)
-            extra_fig = make_extra_recording_plot(rows)
 
-            return md, table, gender_fig, dialect_fig, country_compare_fig, extra_fig
+            if not country_filter or country_filter == "All":
+                # Cross-country overview
+                country_compare_fig = make_country_compare_plot(rows)
+                progress_fig = make_country_progress_plot(rows)
+            else:
+                # Detailed per-speaker view within a single country
+                country_compare_fig = make_duration_histogram(rows, scope_label)
+                progress_fig = make_user_progress_plot(rows, scope_label)
+
+            return md, table, gender_fig, dialect_fig, country_compare_fig, progress_fig
 
         compute_stats_btn.click(
             fn=handle_compute_stats,
             inputs=[country_filter_stats],
-            outputs=[stats_md, stats_df, gender_plot, dialect_plot, country_compare_plot, extra_plot],
+            outputs=[stats_md, stats_df, gender_plot, dialect_plot, plot_3, plot_4],
         )
 
     return demo
