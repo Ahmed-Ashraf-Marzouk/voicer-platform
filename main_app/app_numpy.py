@@ -2,6 +2,8 @@ import os
 import json
 import uuid
 from pathlib import Path
+import tempfile
+import numpy as np
 from datetime import datetime
 import random
 from dotenv import load_dotenv
@@ -813,10 +815,7 @@ def build_app():
                 gr.update(visible=False),
                 gr.update(visible=True),
             )
-        
-        audio_rec.stop_recording(
-            show_progress="minimal"
-        )
+
         goto_register_btn.click(
             show_register,
             inputs=[],
@@ -984,37 +983,51 @@ def build_app():
                 st["current_sentence_id"] = sid
                 st["current_sentence_text"] = text
 
-        def handle_save(audio_path, edited_sentence, st):
+        def handle_save(audio, edited_sentence, st):
+            # audio is now (sr, data) when type="numpy"
             if not st.get("logged_in"):
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
-                return st, "Please login first.", st["current_sentence_text"], st["current_sentence_id"], progress, None
+                return st, "Please login first.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None)
 
-            if not audio_path:
+            if audio is None:
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
-                return st, "⚠️ Record audio first.", st["current_sentence_text"], st["current_sentence_id"], progress, None
+                return st, "⚠️ Record audio first.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None)
 
             sentence_text = (edited_sentence or st["current_sentence_text"]).strip()
             if not sentence_text:
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
-                return st, "⚠️ Sentence text is empty.", st["current_sentence_text"], st["current_sentence_id"], progress, None
+                return st, "⚠️ Sentence text is empty.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None)
 
             sid = st["current_sentence_id"]
             if not sid:
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
-                return st, "⚠️ No active sentence.", st["current_sentence_text"], st["current_sentence_id"], progress, None
+                return st, "⚠️ No active sentence.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None)
 
-            ok, msg, _dur = validate_audio(audio_path)
+            # audio is (sample_rate, data)
+            try:
+                sr, data = audio
+            except Exception:
+                progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
+                return st, "❌ Invalid audio format.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None)
+
+            # Write to a temporary WAV file so we can reuse validate_audio + save_recording_and_upload
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                tmp_path = tmp.name
+                sf.write(tmp_path, data, sr)
+
+            ok, msg, _dur = validate_audio(tmp_path)
             if not ok:
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
-                return st, f"❌ Audio error: {msg}", st["current_sentence_text"], st["current_sentence_id"], progress, None
+                return st, f"❌ Audio error: {msg}", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None)
 
             duration = save_recording_and_upload(
                 st["username"],
                 st["dialect_code"],
                 sid,
                 sentence_text,
-                audio_path,
+                tmp_path,
             )
+
             st["total_duration"] += duration
             if sid not in st["completed_sentences"]:
                 st["completed_sentences"].append(sid)
@@ -1023,7 +1036,16 @@ def build_app():
 
             next_sentence_for_state(st)
             progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
-            return st, "✅ Saved", st["current_sentence_text"], st["current_sentence_id"], progress, None
+
+            # IMPORTANT: reset audio using gr.update instead of raw None
+            return (
+                st,
+                "✅ Saved",
+                st["current_sentence_text"],
+                st["current_sentence_id"],
+                progress,
+                gr.update(value=None),  # clear mic cleanly
+            )
 
         save_btn.click(
             handle_save,
@@ -1034,7 +1056,7 @@ def build_app():
         def handle_skip(st):
             if not st.get("logged_in"):
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
-                return st, "Please login first.", st["current_sentence_text"], st["current_sentence_id"], progress, None
+                return st, "Please login first.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None)
 
             sid = st["current_sentence_id"]
             if sid and sid not in st["completed_sentences"]:
@@ -1043,7 +1065,7 @@ def build_app():
 
             next_sentence_for_state(st)
             progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
-            return st, "Skipped.", st["current_sentence_text"], st["current_sentence_id"], progress, None
+            return st, "Skipped.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None)
 
         skip_btn.click(
             handle_skip,
