@@ -610,29 +610,17 @@ def ensure_user_dirs(username: str, dialect_code: str):
     return user_dir
 
 
-def validate_audio(audio):
-    """
-    audio: (sample_rate, np.ndarray) from gr.Audio(type="numpy")
-    """
+def validate_audio(audio_path: str):
     try:
-        if audio is None:
-            return False, "No audio received", None
-
-        sr, data = audio
-        if data is None or len(data) == 0:
-            return False, "Empty audio", None
-
-        duration = len(data) / float(sr)
-
-        if sr < 16000:
-            return False, f"Sample rate too low: {sr} Hz", duration
-        if duration < 1.0:
-            return False, "Recording too short", duration
-
-        return True, "OK", duration
+        with sf.SoundFile(audio_path) as f:
+            duration = len(f) / f.samplerate
+            if f.samplerate < 16000:
+                return False, f"Sample rate too low: {f.samplerate} Hz", duration
+            if duration < 1.0:
+                return False, "Recording too short", duration
+            return True, "OK", duration
     except Exception as e:
         return False, f"Audio error: {e}", None
-
 
 
 def upload_file_to_s3(local_path: Path, s3_key: str):
@@ -647,21 +635,13 @@ def upload_file_to_s3(local_path: Path, s3_key: str):
         return False
 
 
-def save_recording_and_upload(
-    username: str,
-    dialect_code: str,
-    sentence_id: str,
-    sentence_text: str,
-    audio
-):
+def save_recording_and_upload(username: str, dialect_code: str, sentence_id: str, sentence_text: str, audio_path: str):
     """
-    audio: (sample_rate, np.ndarray) from gr.Audio(type="numpy")
-
     Local:
-      ~/.tts_dataset_creator/users/{country}/{dialect}/{username}/wavs/{username}_{sentence}.wav
+      ~/.tts_dataset_creator/users/{country}/{dialect}/{username}/wavs/{country}_{dialect}_{username}_{sentence}.wav
 
-    S3:
-      {country_code}/{username}/wavs/{username}_{sentence}.wav
+    S3 (country-level folder only):
+      {country_code}/{username}/wavs/{country}_{dialect}_{username}_{sentence}.wav
       {country_code}/{username}/metadata.csv
     """
     user_dir = ensure_user_dirs(username, dialect_code)
@@ -675,11 +655,7 @@ def save_recording_and_upload(
     filename = f"{username}_{sentence_id}.wav"
     dest = wav_dir / filename
 
-    # audio is (sr, data)
-    sr, data = audio
-
-    # write numpy audio to WAV
-    sf.write(dest, data, sr)
+    Path(audio_path).replace(dest)
 
     try:
         with sf.SoundFile(dest) as f:
@@ -810,7 +786,7 @@ def build_app():
             progress_box = gr.Textbox(label="📊 الإنجاز", interactive=False)
             sentence_box = gr.Textbox(label="✍️الجملة (يمكنك تعديل الجملة)", interactive=True, lines=3)
             sentence_id_box = gr.Textbox(label="Sentence ID", interactive=False, visible=False)
-            audio_rec = gr.Audio(sources=["microphone"], type="numpy", label="Record", format="wav")
+            audio_rec = gr.Audio(sources=["microphone"], type="filepath", label="Record", format="wav")
             save_btn = gr.Button("Save & Next", variant="primary")
             skip_btn = gr.Button("Skip")
             msg_box = gr.Markdown("")
@@ -1008,12 +984,12 @@ def build_app():
                 st["current_sentence_id"] = sid
                 st["current_sentence_text"] = text
 
-        def handle_save(audio, edited_sentence, st):
+        def handle_save(audio_path, edited_sentence, st):
             if not st.get("logged_in"):
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
                 return st, "Please login first.", st["current_sentence_text"], st["current_sentence_id"], progress, None
 
-            if audio is None:
+            if not audio_path:
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
                 return st, "⚠️ Record audio first.", st["current_sentence_text"], st["current_sentence_id"], progress, None
 
@@ -1027,7 +1003,7 @@ def build_app():
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
                 return st, "⚠️ No active sentence.", st["current_sentence_text"], st["current_sentence_id"], progress, None
 
-            ok, msg, _dur = validate_audio(audio)
+            ok, msg, _dur = validate_audio(audio_path)
             if not ok:
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
                 return st, f"❌ Audio error: {msg}", st["current_sentence_text"], st["current_sentence_id"], progress, None
@@ -1037,7 +1013,7 @@ def build_app():
                 st["dialect_code"],
                 sid,
                 sentence_text,
-                audio,   # ← pass numpy audio
+                audio_path,
             )
             st["total_duration"] += duration
             if sid not in st["completed_sentences"]:
