@@ -3,6 +3,7 @@ import json
 import uuid
 import time
 from pathlib import Path
+import tempfile
 import numpy as np
 from datetime import datetime
 import random
@@ -31,6 +32,8 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "voicer-storage")
 AWS_REGION = os.environ.get("AWS_REGION", "me-south-1")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+print(SUPABASE_KEY)
+print(SUPABASE_URL)
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("⚠️ Supabase env vars not set")
@@ -789,7 +792,7 @@ def build_app():
              # 👇 give the audio component a stable DOM id
             audio_rec = gr.Audio(
                 sources=["microphone"],
-                type="filepath",
+                type="numpy",
                 label="Record",
                 format="wav",
             )
@@ -834,34 +837,41 @@ def build_app():
             outputs=[save_btn, skip_btn],
         )
 
-        def on_stop_recording(audio_path, st):
+        def on_stop_recording(audio, st):
             """
             Called when the user stops recording.
-            For type="filepath", `audio_path` is a string path to the WAV on the server.
+            `audio` is (sample_rate, data) because type="numpy".
+            We write it to a temp WAV on the server and store the path in state.
             """
-            if not audio_path:
+            if audio is None:
                 # nothing recorded
-                return st, "", gr.update(value=None), gr.update(interactive=True), gr.update(interactive=True)
+                return st, ""
 
-            # Store for later use if you want
-            st["last_temp_audio_path"] = audio_path
-            print("Stored temp audio at:", audio_path)
+            try:
+                sr, data = audio
+            except Exception:
+                # unexpected format, don't crash the app
+                return st, ""
 
-            time.sleep(1)  # simulate processing delay / UX
-            return (
-                st,
-                audio_path,                  # -> temp_audio_path Textbox
-                gr.update(value=audio_path), # set Audio value to that file (preview uses file)
-                gr.update(interactive=True), # re-enable Save
-                gr.update(interactive=True), # re-enable Skip
-            )
+            # Write to a temporary WAV file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                tmp_path = tmp.name
+                sf.write(tmp_path, data, sr)
+
+            # Store for later use
+            st["last_temp_audio_path"] = tmp_path
+            print("Stored temp audio at:", tmp_path)
+
+            # Return updated state and the path into temp_audio_path
+            time.sleep(1)  # simulate processing delay
+            return st, tmp_path, gr.update(value=tmp_path), gr.update(interactive=True), gr.update(interactive=True)  # reset audio component
+
 
         audio_rec.stop_recording(
             fn=on_stop_recording,
             inputs=[audio_rec, state],
             outputs=[state, temp_audio_path, audio_rec, save_btn, skip_btn],
         )
-
 
         goto_register_btn.click(
             show_register,
@@ -1030,12 +1040,14 @@ def build_app():
                 st["current_sentence_id"] = sid
                 st["current_sentence_text"] = text
 
-        def handle_save(audio_path, edited_sentence, temp_path, st):
+        def handle_save(audio, edited_sentence, temp_path, st):
+            # audio is (sr, data) when type="numpy"
             if not st.get("logged_in"):
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
                 return st, "Please login first.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None), gr.update(interactive=True)
 
-            if not audio_path and not temp_path:
+            if audio is None and not temp_path:
+                # no fresh audio in component AND no temp file saved
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
                 return st, "⚠️ Record audio first.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None), gr.update(interactive=True)
 
@@ -1049,10 +1061,20 @@ def build_app():
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
                 return st, "⚠️ No active sentence.", st["current_sentence_text"], st["current_sentence_id"], progress, gr.update(value=None), gr.update(interactive=True)
 
-            # Choose which filepath to use:
-            # 1) Prefer current audio_rec value (audio_path)
-            # 2) Fallback to temp_path from stop_recording
-            tmp_path = audio_path or temp_path
+            # Decide which audio source to use:
+            # 1) If we still have `(sr, data)` in the component, re-write it.
+            # 2) Else, fall back to the temp_path saved on stop_recording.
+            if audio is not None:
+                try:
+                    sr, data = audio
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                        tmp_path = tmp.name
+                        sf.write(tmp_path, data, sr)
+                except Exception:
+                    # If something goes wrong, and we *do* have a temp_path, use that
+                    tmp_path = temp_path or None
+            else:
+                tmp_path = temp_path
 
             if not tmp_path:
                 progress = compute_progress(len(st["completed_sentences"]), st["total_duration"])
@@ -1086,8 +1108,8 @@ def build_app():
                 st["current_sentence_text"],
                 st["current_sentence_id"],
                 progress,
-                gr.update(value=None),  # clear audio UI if you want
-                gr.update(interactive=True),
+                gr.update(value=None),  # clear mic cleanly
+                gr.update(interactive=True)
             )
 
         def disable_skip():
