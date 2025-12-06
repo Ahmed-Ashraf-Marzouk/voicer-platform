@@ -1,20 +1,25 @@
-    name: Deploy on Push
+name: Deploy on Push
 
-    on:
-      push:
-        branches:
-          - main # or your primary branch like 'master'
+on:
+  push:
+    branches:
+      - main
 
-    jobs:
-      deploy:
-        runs-on: ubuntu-latest # Or another suitable runner environment
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
 
-        steps:
-          - name: Checkout repository
-            uses: actions/checkout@v4 # Action to checkout your code
+    steps:
+      - name: Checkout repository (still useful for version info, etc.)
+        uses: actions/checkout@v4
 
-          - name: Make deploy script executable
-            run: chmod +x ./deploy.sh # Ensure your script has execute permissions
-
-          - name: Run deployment script
-            run: ./deploy.sh # Execute your deployment script
+      - name: Deploy to remote server over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }} # private key stored in secrets
+          port: ${{ secrets.SERVER_SSH_PORT }} # optional, default 22
+          script: |
+            cd /opt/voicer-platform
+            ./deploy.sh
