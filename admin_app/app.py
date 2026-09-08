@@ -86,7 +86,7 @@ COUNTRY_CODES = {
 
 COUNTRY_FILTER_CHOICES = ["All"] + sorted(COUNTRY_CODES.keys())
 
-RECORDING_TARGET_MINUTES = 60
+RECORDING_TARGET_MINUTES = 15
 RECORDING_TARGET_SECONDS = RECORDING_TARGET_MINUTES * 60
 
 
@@ -230,7 +230,7 @@ def get_users_with_sessions(country_filter=None):
             "username": username,
             "name": u.get("name") or "",
             "email": u.get("email") or "",
-            "country": u.get("country") or "",
+            "country": u.get("country") or "Saudi Arabia",
             "dialect_code": u.get("dialect_code") or "",
             "gender": u.get("gender") or "",
             "age": u.get("age") or "",
@@ -894,15 +894,15 @@ Manage admins, view user recordings from S3, and monitor progress.
 
             total_sec = stats["total_duration"]
             total_min = int(total_sec // 60)
-            total_h  = int(total_min / 60)
+            total_h  =  total_min / 60 
             total_sec_rem = int(total_sec % 60)
 
             avg_sec = stats["avg_duration"]
             avg_min = int(avg_sec // 60)
-            avg_h   = int(avg_min / 60)
+            avg_h   = avg_min / 60
             avg_sec_rem = int(avg_sec % 60)
 
-            # How many users hit / did not hit the 30-min target
+            # How many users hit / did not hit the 15-min target
             users_above_target = sum(
                 1 for r in rows if r["total_duration"] >= RECORDING_TARGET_SECONDS
             )
